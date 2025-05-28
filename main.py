@@ -139,7 +139,6 @@ def calculate_cosine_similarity(matrix):
     epsilon = 1e-10
     normalized = matrix.div(np.sqrt((matrix**2).sum(axis=1) + epsilon), axis=0)
     similarity = normalized.dot(normalized.T)
-    similarity[similarity < 0.1] = 0
     return similarity
 
 
@@ -165,7 +164,6 @@ async def recommend_tracks(playlist_id: str, n_recommendations: int = 5):
     # Lấy top K playlist tương tự nhất
     similar_playlists = playlist_similarity.loc[playlist_id].sort_values(ascending=False)[
         1:11]
-    similar_playlists = similar_playlists[similar_playlists > 0.1]
 
     # Dictionary để lưu điểm của các bài hát
     track_scores = {}
@@ -179,6 +177,7 @@ async def recommend_tracks(playlist_id: str, n_recommendations: int = 5):
         similar_playlist_tracks = set(
             matrix.loc[similar_playlist_id][matrix.loc[similar_playlist_id] == 1].index
         )
+        
         new_tracks = similar_playlist_tracks - current_tracks
 
         for track in new_tracks:
@@ -199,7 +198,7 @@ async def recommend_tracks(playlist_id: str, n_recommendations: int = 5):
         for track, _ in sorted_tracks
     ]
 
-    return normalized_recommendations  # Return the list directly
+    return normalized_recommendations
 
 
 if __name__ == "__main__":
