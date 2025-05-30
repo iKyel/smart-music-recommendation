@@ -117,15 +117,10 @@ def get_similar_artists(artist_id: str, n: int = 5) -> ArtistRecommendationRespo
             for aid, score in recommendations.items()
         ]
     )
-
-# Model cho response
-
-
 class RecommendationResponse(BaseModel):
-    recommendations: Dict[str, Dict[str, str]]  # Update to reflect the new structure
+    recommendations: Dict[str, Dict[str, str]] 
 
 # Khởi tạo ma trận và similarity matrix
-
 
 def load_matrix():
     matrix_values = np.load(
@@ -133,7 +128,6 @@ def load_matrix():
     matrix_df = pd.read_csv(
         'data/track_recommend//playlist_song_matrix.csv', index_col=0)
     return pd.DataFrame(matrix_values, index=matrix_df.index, columns=matrix_df.columns)
-
 
 def calculate_cosine_similarity(matrix):
     epsilon = 1e-10
@@ -201,7 +195,131 @@ async def recommend_tracks(playlist_id: str, n_recommendations: int = 5):
     return normalized_recommendations
 
 
+# Define response model for track recommendations
+class TrackRecommendation(BaseModel):
+    track_id: str
+    similarity_score: float
+
+class TrackRecommendationResponse(BaseModel):
+    track_id: str
+    recommendations: List[TrackRecommendation]
+
+# Initialize matrices when server starts
+track_similarity = None
+playlist_song_matrix = None
+
+def load_playlist_song_matrix():
+    """Load ma trận tương tác playlist-song từ file
+    
+    Returns:
+        DataFrame: Ma trận tương tác playlist-song
+    """
+    try:
+        # Load ma trận numpy
+        matrix_values = np.load('data/track_recommend/playlist_song_matrix.npy')
+        
+        # Load thông tin index và columns từ file CSV
+        matrix_df = pd.read_csv('data/track_recommend/playlist_song_matrix.csv', index_col=0)
+        
+        # Tạo DataFrame với index và columns đúng
+        matrix = pd.DataFrame(
+            matrix_values,
+            index=matrix_df.index,
+            columns=matrix_df.columns
+        )
+        
+        return matrix
+    except Exception as e:
+        print(f"Error loading playlist-song matrix: {e}")
+        return None
+
+def calculate_track_similarity(matrix):
+    """Tính toán độ tương đồng cosine giữa các bài hát
+
+    Args:
+        matrix (DataFrame): Ma trận tương tác playlist-song
+
+    Returns:
+        DataFrame: Ma trận độ tương đồng cosine giữa các bài hát
+    """
+    # Chuyển vị ma trận để có track làm hàng và playlist làm cột
+    track_matrix = matrix.T
+    
+    # Chuẩn hóa ma trận theo hàng (track)
+    # Thêm epsilon để tránh chia cho 0
+    epsilon = 1e-10
+    normalized = track_matrix.div(np.sqrt((track_matrix**2).sum(axis=1) + epsilon), axis=0)
+    similarity = normalized.dot(normalized.T)
+
+    return similarity
+
+def recommend_tracks_by_track_id(track_id: str, track_similarity: pd.DataFrame, n_recommendations: int = 5) -> Dict[str, float]:
+    """Đề xuất bài hát dựa trên track_id đầu vào
+
+    Args:
+        track_id (str): ID của bài hát cần tìm bài hát tương tự
+        track_similarity (DataFrame): Ma trận độ tương đồng giữa các bài hát
+        n_recommendations (int): Số lượng bài hát đề xuất
+
+    Returns:
+        Dict[str, float]: Dictionary chứa track_id và điểm tương đồng
+    """
+    if track_id not in track_similarity.index:
+        return {}
+
+    # Lấy độ tương đồng của track_id với tất cả các track khác
+    similarities = track_similarity.loc[track_id].sort_values(ascending=False)
+    
+    # Loại bỏ chính track_id đó (similarity = 1.0)
+    similarities = similarities[similarities.index != track_id]
+    
+    # Lấy top N bài hát tương tự nhất
+    top_similar_tracks = similarities.head(n_recommendations)
+    
+    # Chuyển đổi thành dictionary với điểm được làm tròn
+    return {track: round(float(score), 3) for track, score in top_similar_tracks.items()}
+
+@app.get("/recommend/tracks/similar/{track_id}", response_model=TrackRecommendationResponse)
+def get_similar_tracks(track_id: str, n: int = 5) -> TrackRecommendationResponse:
+    """Endpoint để lấy danh sách bài hát tương tự dựa trên track_id
+
+    Args:
+        track_id (str): ID của bài hát cần tìm bài hát tương tự
+        n (int, optional): Số lượng đề xuất. Defaults to 5.
+
+    Returns:
+        TrackRecommendationResponse: Danh sách các bài hát được đề xuất và điểm số
+    """
+    global track_similarity, playlist_song_matrix
+
+    # Load và tính toán ma trận nếu chưa có
+    if playlist_song_matrix is None:
+        playlist_song_matrix = load_playlist_song_matrix()
+        if playlist_song_matrix is None:
+            raise HTTPException(status_code=500, detail="Could not load playlist-song matrix")
+        
+        # Tính toán ma trận tương đồng
+        track_similarity = calculate_track_similarity(playlist_song_matrix)
+
+    # Kiểm tra track_id có tồn tại
+    if track_id not in track_similarity.index:
+        raise HTTPException(status_code=404, detail=f"Track ID {track_id} not found")
+
+    # Lấy đề xuất
+    recommendations = recommend_tracks_by_track_id(track_id, track_similarity, n)
+
+    return TrackRecommendationResponse(
+        track_id=track_id,
+        recommendations=[
+            TrackRecommendation(track_id=tid, similarity_score=score)
+            for tid, score in recommendations.items()
+        ]
+    )
+
 if __name__ == "__main__":
     import uvicorn
     artist_similarity = load_artist_similarity_matrix()
+    playlist_song_matrix = load_playlist_song_matrix() 
+    if playlist_song_matrix is not None:
+        track_similarity = calculate_track_similarity(playlist_song_matrix) 
     uvicorn.run(app, host=settings.host, port=settings.port)
