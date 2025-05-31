@@ -208,6 +208,34 @@ class TrackRecommendationResponse(BaseModel):
 track_similarity = None
 playlist_song_matrix = None
 
+# Thêm hàm mới để load ma trận tương đồng của track từ file
+def load_track_similarity_matrix():
+    """Load ma trận tương đồng giữa các track từ file đã lưu
+    
+    Returns:
+        DataFrame: Ma trận tương đồng giữa các track
+    """
+    try:
+        # Load ma trận numpy
+        similarity_values = np.load('data/track_recommend/track_similarity_matrix.npy')
+        
+        # Load thông tin index từ file CSV
+        index_df = pd.read_csv('data/track_recommend/track_similarity_index.csv', header=None)
+        track_ids = index_df[0].values
+        
+        # Tạo DataFrame với index đúng
+        similarity_matrix = pd.DataFrame(
+            similarity_values,
+            index=track_ids,
+            columns=track_ids
+        )
+        
+        return similarity_matrix
+    except Exception as e:
+        print(f"Error loading track similarity matrix: {e}")
+        return None
+
+# Giữ nguyên hàm load_playlist_song_matrix() và recommend_tracks_by_track_id()
 def load_playlist_song_matrix():
     """Load ma trận tương tác playlist-song từ file
     
@@ -290,16 +318,13 @@ def get_similar_tracks(track_id: str, n: int = 5) -> TrackRecommendationResponse
     Returns:
         TrackRecommendationResponse: Danh sách các bài hát được đề xuất và điểm số
     """
-    global track_similarity, playlist_song_matrix
+    global track_similarity
 
-    # Load và tính toán ma trận nếu chưa có
-    if playlist_song_matrix is None:
-        playlist_song_matrix = load_playlist_song_matrix()
-        if playlist_song_matrix is None:
-            raise HTTPException(status_code=500, detail="Could not load playlist-song matrix")
-        
-        # Tính toán ma trận tương đồng
-        track_similarity = calculate_track_similarity(playlist_song_matrix)
+    # Load ma trận tương đồng nếu chưa có
+    if track_similarity is None:
+        track_similarity = load_track_similarity_matrix()
+        if track_similarity is None:
+            raise HTTPException(status_code=500, detail="Could not load track similarity matrix")
 
     # Kiểm tra track_id có tồn tại
     if track_id not in track_similarity.index:
@@ -319,7 +344,5 @@ def get_similar_tracks(track_id: str, n: int = 5) -> TrackRecommendationResponse
 if __name__ == "__main__":
     import uvicorn
     artist_similarity = load_artist_similarity_matrix()
-    playlist_song_matrix = load_playlist_song_matrix() 
-    if playlist_song_matrix is not None:
-        track_similarity = calculate_track_similarity(playlist_song_matrix) 
+    track_similarity = load_track_similarity_matrix()
     uvicorn.run(app, host=settings.host, port=settings.port)
